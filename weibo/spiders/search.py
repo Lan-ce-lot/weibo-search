@@ -11,6 +11,11 @@ from scrapy.exceptions import CloseSpider
 from scrapy.utils.project import get_project_settings
 from weibo.items import WeiboItem
 
+import requests
+import json
+from scrapy.utils.project import get_project_settings
+
+settings = get_project_settings()
 
 class SearchSpider(scrapy.Spider):
     name = 'search'
@@ -265,6 +270,32 @@ class SearchSpider(scrapy.Spider):
                                          'city': city
                                      })
 
+    def get_user_info(self, weibo):
+        # settings.
+
+        cookies_dict = {}
+        cookies_string = settings.getdict('DEFAULT_REQUEST_HEADERS')['cookie']
+        for i in cookies_string.split(";"):
+            cookies_dict[i.split('=')[0]] = i.split('=')[1]
+        base_url = "https://weibo.com/ajax/profile/detail?uid=" + weibo['user_id']
+        res = requests.get(url=base_url,
+        headers={
+                'Accept':
+            'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8,en-US;q=0.7',
+        },
+        cookies=cookies_dict)
+        dic = json.loads(res.text)
+        if 'ip_location' in dic['data'].keys() and dic['data']['ip_location'] != "" :
+            weibo['ip_location'] = dic['data']['ip_location']
+        elif 'location' in dic['data'].keys():
+            weibo['ip_location'] = dic['data']['location']
+        if 'gender' in dic['data'].keys():
+            weibo['gender'] = dic['data']['gender']
+        if 'birthday' in dic['data'].keys():
+            weibo['birthday'] = dic['data']['birthday']
+        return weibo
+
     def parse_page(self, response):
         """解析一页搜索结果的信息"""
         keyword = response.meta.get('keyword')
@@ -354,7 +385,7 @@ class SearchSpider(scrapy.Spider):
                 weibo = WeiboItem()
                 weibo['id'] = sel.xpath('@mid').extract_first()
                 weibo['bid'] = sel.xpath(
-                    './/p[@class="from"]/a[1]/@href').extract_first(
+                    './/div[@class="from"]/a[1]/@href').extract_first(
                     ).split('/')[-1].split('?')[0]
                 weibo['user_id'] = info[0].xpath(
                     'div[2]/a/@href').extract_first().split('?')[0].split(
@@ -426,10 +457,10 @@ class SearchSpider(scrapy.Spider):
                 weibo['attitudes_count'] = attitudes_count[
                     0] if attitudes_count else '0'
                 created_at = sel.xpath(
-                    './/p[@class="from"]/a[1]/text()').extract_first(
+                    './/div[@class="from"]/a[1]/text()').extract_first(
                     ).replace(' ', '').replace('\n', '').split('前')[0]
                 weibo['created_at'] = util.standardize_date(created_at)
-                source = sel.xpath('.//p[@class="from"]/a[2]/text()'
+                source = sel.xpath('.//div[@class="from"]/a[2]/text()'
                                    ).extract_first()
                 weibo['source'] = source if source else ''
                 pics = ''
@@ -517,5 +548,6 @@ class SearchSpider(scrapy.Spider):
                     retweet['retweet_id'] = ''
                     yield {'weibo': retweet, 'keyword': keyword}
                     weibo['retweet_id'] = retweet['id']
+                weibo = self.get_user_info(weibo)
                 print(weibo)
                 yield {'weibo': weibo, 'keyword': keyword}
